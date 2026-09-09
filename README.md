@@ -1,83 +1,126 @@
-# AI Agent Starter Kit
+# Agent scaffold
 
-A minimal, working example of an **agentic workflow**: tool/function calling,
-structured output validated with Pydantic, retries with backoff, typed
-config via `pydantic-settings`, a FastAPI endpoint, Docker (built with
-`uv`), and tests with the LLM mocked out.
+A small LangGraph agent behind a FastAPI endpoint, with typed config, a
+retry policy, and tests that run without an API key.
 
-It's deliberately generic so you can gut the domain logic (`app/tools.py`,
-`app/models.py`, the system prompt in `app/agent.py`) and rebuild it around
-whatever the actual interview prompt asks for, while keeping the same
-plumbing: agent loop → tool execution → structured/validated final answer.
-
-## Why this shape
-
-Mapped directly to the evaluation criteria in the guidelines you were given:
-
-- **Agent design** → `agent.py` runs a bounded tool-calling loop, not an
-  unbounded `while True`.
-- **Structured outputs** → the final answer is a Pydantic model
-  (`TaskResponse`), and a malformed reply triggers one "repair" call instead
-  of crashing.
-- **Reliability** → `llm_client.py` retries transient failures with
-  exponential backoff, and the OpenAI client is constructed lazily (on
-  first real use, not at import time) so the module stays importable and
-  testable with zero credentials present.
-- **Typed config** → `app/config.py` uses `pydantic-settings` instead of
-  scattered `os.getenv()` calls — env vars are validated and type-coerced
-  once, at startup, with real error messages if something's malformed.
-- **Clean, modular code** → LLM calls, tool definitions, agent logic, and
-  the API layer are separate files, not one script.
-- **Testing/evaluation** → `tests/test_agent.py` mocks the LLM so tests run
-  deterministically and don't burn API calls.
-- **Production readiness talking points** → Docker + docker-compose, built
-  with `uv` so the container installs the exact locked dependency versions
-  from `uv.lock`, not "whatever pip resolves today."
+The nodes are placeholders. They demonstrate the shape of the thing — a
+guardrail that rejects bad input before spending a call, an intent step, a
+tool step, a structured answer with one repair attempt — and are meant to be
+replaced with whatever the actual task needs.
 
 ## Setup
 
-Requires Python >= 3.14 and [`uv`](https://docs.astral.sh/uv/).
+Needs Python 3.14 and [uv](https://docs.astral.sh/uv/).
 
-1. `cp .env.example .env` and fill in ONE provider's key (Groq and
-   OpenRouter both have free tiers — see the interview guidelines).
-2. Local run:
-   ```
-   uv sync
-   uv run uvicorn app.main:app --reload
-   ```
-3. Docker run:
-   ```
-   docker compose up --build
-   ```
-4. Test it:
-   ```
-   curl -X POST localhost:8000/agent/run \
-     -H "Content-Type: application/json" \
-     -d '{"request": "What is the weather in Jaipur, and what is 12 * 7?"}'
-   ```
-5. Run tests: `uv run pytest -v`
+```bash
+uv sync
+cp .env.example .env      # fill in one provider's key
+```
 
-## Adapting this during the interview
+```bash
+make dev      # API on :8000
+make ui       # chat UI on :8501
+make test     # test suite, no API key needed
+make graph    # print the graph as mermaid
+```
 
-- New tool → add a function + JSON schema entry in `tools.py`, register it in
-  `TOOL_REGISTRY`. The agent loop doesn't change.
-- New output shape → edit `TaskResponse` in `models.py`.
-- New config value → add a typed field to `Settings` in `config.py`.
-- New task → rewrite `SYSTEM_PROMPT` in `agent.py`.
-- If they want a *different* framework (LangChain/LangGraph/CrewAI), the
-  concepts here (loop, tool schema, validated output, retries) transfer
-  directly — you're just swapping who owns the loop.
+Or `docker compose up --build`.
 
-## Known trade-offs (good to say out loud if asked)
+## The provider
 
-- `max_tool_iterations` is a blunt safeguard against infinite loops; a real
-  system would also track cost/token budget per request.
-- The "repair" step only retries once — production would log the failure
-  and probably fall back to a safe default rather than trusting a second
-  free-form JSON blob.
-- No conversation persistence/state store here — each call is stateless.
-  Add a session store (Redis/DB) if the task needs multi-turn memory.
-- `calculate()` uses a restricted `eval` for demo speed; in production use a
-  real expression parser (e.g. `asteval`), not `eval` at all.
-- `Dockerfile` uses `--no-dev` on `uv sync` so `pytest` never ships in the
-  runtime image — dev tooling and prod dependencies are deliberately split.
+Groq, via the `openai` package — Groq speaks the OpenAI chat-completions
+protocol, so that package is a protocol client here rather than a commitment
+to OpenAI. Nothing in the code names a provider; `llm_base_url`, `llm_model`
+and `llm_api_key` are the whole of it, which is the escape hatch if a free
+tier starts rate-limiting at the wrong moment.
+
+Model names go stale. On a 404 saying `model_not_found`, ask the endpoint
+what it serves:
+
+```bash
+uv run python -c "from app.llm_client import _get_client; \
+  print([m.id for m in _get_client().models.list().data])"
+```
+
+## Layout
+
+```
+app/
+  config/settings.py   typed env config
+  config/logging.py    logfire, skipped when no token is set
+  errors.py            the failure kinds, split by how each is handled
+  llm_client.py        chat_completion + retry policy
+  models.py            structured-output schemas
+  agents/state.py      the state passed between nodes
+  agents/nodes.py      the four steps          <- rewrite per task
+  agents/graph.py      how they are wired
+  tools.py             tool functions + schemas <- rewrite per task
+  backend_api.py       everything that touches a real system
+  main.py              HTTP layer
+ui/streamlit_app.py    chat UI
+```
+
+## The node contract
+
+A node takes the state and returns **only the fields it changed**:
+
+```python
+def guardrail_node(state: AgentState) -> dict:
+    if bad(state.current_query):
+        return {"status": "escalated"}
+    return {}                      # changed nothing, carry on
+```
+
+Returning the whole state works but quietly overwrites anything a
+concurrent node wrote, so partial dicts are the convention. `messages` is
+declared `Annotated[list[dict], operator.add]`, which makes that one channel
+append instead of overwrite.
+
+Routing lives in `graph.py`, not inside the nodes, so the flow stays
+readable as a diagram (`make graph`).
+
+## Failures
+
+Retrying is not one behaviour, so `errors.py` splits it four ways:
+
+| | |
+|---|---|
+| `InvalidInputError` | Deterministic given the input. Retrying reproduces it, so it is caught before any call is made. |
+| `TransientLLMError` | Dropped connection, timeout, 5xx. Retried with exponential backoff. |
+| `RateLimitError` | A 429 carries a `Retry-After`. Sleeps for exactly that; backoff maths would either return too early or idle well past the window. |
+| `MalformedResponseError` | The reply parsed as text but not as the requested shape. Retried once with a repair prompt, then escalated rather than trusting a third attempt. |
+
+A 4xx that isn't a 429 is a bad request and is raised immediately.
+
+## Extending it
+
+**A tool** is a function plus a schema entry in `tools.py`. Anything reaching
+a real system goes through `backend_api.py`, which is also where
+authorization belongs — not in `tools.py`, and never in a prompt, since
+anything the model can see it can be talked out of.
+
+**A step** is a function in `nodes.py` plus a line in `graph.py`.
+
+**Structured output** is `models.py`. The two-model split there is worth
+keeping: fields the model fills are all optional, so an omission is a null to
+handle rather than a validation crash, and fields like `user_id` and
+`timestamp` are attached by code and never asked for — a model that can write
+its own caller identity is an identity an attacker can set from the prompt.
+
+## Tests
+
+`uv run pytest`. The LLM is mocked throughout, so the suite is deterministic
+and costs nothing. `chat_completion` is patched where the module under test
+looks it up.
+
+The client is built on first call rather than at import, which is what lets
+the whole suite import `app.llm_client` with no credentials present — there
+is a test asserting exactly that.
+
+## Known gaps
+
+- No persistence. Each request is independent; multi-turn needs a
+  checkpointer or an external store.
+- No token or cost budget. `max_retries` bounds attempts, not spend.
+- The retry policy has no jitter, so simultaneous clients back off in step.
+- `logfire` is wired but only reports if `LOGFIRE_TOKEN` is set.

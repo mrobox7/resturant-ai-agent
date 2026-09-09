@@ -8,4 +8,9 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Secrets. The glob also covers .env.bak, .env.local and friends — a
+# bare `.env` line does not, and those hold real keys too.
 .env
+.env.*
+!.env.example

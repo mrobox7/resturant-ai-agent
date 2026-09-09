@@ -1,5 +1,5 @@
 services:
-  agent:
+  api:
     build: .
     ports:
       - "8000:8000"
@@ -7,3 +7,8 @@ services:
       - .env
     volumes:
       - ./app:/app/app
+    # The image's own CMD has no --reload, so it stays production-shaped;
+    # this override pairs it with the bind mount above for local work.
+    command: >
+      uv run uvicorn app.main:app
+      --host 0.0.0.0 --port 8000 --reload
