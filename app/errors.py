@@ -23,3 +23,15 @@ class InvalidInputError(Exception):
     Never retry — must be caught by validation BEFORE any LLM call."""
 
     pass
+
+
+class BackendValidationError(Exception):
+    """4xx from the restaurant backend on a request that was well-formed but
+    violates a business rule the backend alone can check (slot no longer
+    free, menu item doesn't exist). Deterministic given input — never
+    retried. Carries the backend's own `detail` message, since that's
+    exactly what should be relayed to the user, not a generic HTTP string."""
+
+    def __init__(self, detail: str):
+        super().__init__(detail)
+        self.detail = detail

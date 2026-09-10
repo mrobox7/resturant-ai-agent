@@ -2,13 +2,19 @@ services:
   api:
     build: .
     ports:
-      - "8000:8000"
+      # 8080, not 8000: the restaurant backend this agent calls already owns
+      # 8000 on the host (see BACKEND_API_BASE_URL), so the agent's own API
+      # needs a different port to run alongside it.
+      - "8080:8080"
     env_file:
       - .env
     volumes:
       - ./app:/app/app
+      # Episodic memory (app/memory.py) is per-customer local disk state,
+      # not code — bind-mounted so it survives a container recreation.
+      - ./memory:/app/memory
     # The image's own CMD has no --reload, so it stays production-shaped;
     # this override pairs it with the bind mount above for local work.
     command: >
       uv run uvicorn app.main:app
-      --host 0.0.0.0 --port 8000 --reload
+      --host 0.0.0.0 --port 8080 --reload

@@ -32,5 +32,8 @@ class Settings(BaseSettings):
 
     max_retries: int = 3
 
+    backend_api_base_url: str = "http://localhost:8000"
+    backend_api_timeout: float = 5.0
+
 
 settings = Settings()

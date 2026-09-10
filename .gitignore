@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# Runtime-generated per-customer episodic memory (see app/memory.py)
+/memory/
+
 # Secrets. The glob also covers .env.bak, .env.local and friends — a
 # bare `.env` line does not, and those hold real keys too.
 .env

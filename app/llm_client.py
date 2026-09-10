@@ -9,6 +9,7 @@ llm_model and llm_api_key in .env, with no change here.
 import logging
 import time
 
+import logfire
 from openai import OpenAI
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 from openai import RateLimitError as ProviderRateLimitError
@@ -38,6 +39,10 @@ def _get_client() -> OpenAI:
             api_key=settings.llm_api_key.get_secret_value(),
             base_url=settings.llm_base_url,
         )
+        # Traces every completion (prompt, response, tokens, latency) as a
+        # logfire span — this is the LLM-call-level observability, distinct
+        # from the request-level tracing configure_logging sets up.
+        logfire.instrument_openai(_client)
     return _client
 
 

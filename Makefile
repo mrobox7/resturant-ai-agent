@@ -1,7 +1,7 @@
 .PHONY: dev ui test graph
 
 dev:
-	uv run uvicorn app.main:app --reload
+	uv run uvicorn app.main:app --port 8080 --reload
 
 ui:
 	uv run streamlit run ui/streamlit_app.py

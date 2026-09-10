@@ -6,7 +6,7 @@ requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.115",
     "langgraph>=0.2",
-    "logfire>=0.50",
+    "logfire[fastapi]>=0.50",
     "openai>=1.51",
     "pydantic>=2.9",
     "pydantic-settings>=2.5",
